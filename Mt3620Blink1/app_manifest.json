@@ -1,0 +1,19 @@
+{
+  "SchemaVersion": 1,
+  "Name" : "Mt3620Blink1",
+  "ComponentId" : "44580bbf-355f-449d-8189-f9952f3ce769",
+  "EntryPoint": "/bin/app",
+  "CmdArgs": [],
+  "Capabilities": {
+    "AllowedConnections": [],
+    "AllowedTcpServerPorts": [],
+    "AllowedUdpServerPorts": [],
+    "Gpio": [ 8, 9, 10, 12 ],
+    "Uart": [],
+    "I2cMaster": [],
+    "SpiMaster": [],
+    "WifiConfig": false,
+    "NetworkConfig": false,
+    "SystemTime": false
+  }
+}
