@@ -1,0 +1,9 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs
+/Mt3620Blink1/bin/ARM/Debug
+/Mt3620Blink1/obj/ARM/Debug
+/Mt3620Blink1/out
+/Mt3620Blink1/.vs
