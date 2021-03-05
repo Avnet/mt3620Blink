@@ -35,7 +35,7 @@ static GPIO_Value_Type buttonState = GPIO_Value_High;
 static GPIO_Value_Type ledState = GPIO_Value_High;
 
 // Blink interval variables
-static const int numBlinkIntervals = 3;
+static const int numBlinkIntervals = 0;
 static const struct timespec blinkIntervals[] = {{0, 125000000}, {0, 250000000}, {0, 500000000}};
 static int blinkIntervalIndex = 0;
 
