@@ -1,6 +1,6 @@
 {
   "SchemaVersion": 1,
-  "Name": "OTA_EXAMPLE_RED-V0",
+  "Name": "OTA_EXAMPLE_GREEN-V0",
   "ComponentId": "dc7f135c-6074-4d49-aa3a-160e4eed884f",
   "EntryPoint": "/bin/app",
   "CmdArgs": [],
