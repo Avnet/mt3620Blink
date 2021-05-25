@@ -1,4 +1,16 @@
-﻿#include <errno.h>
+/* Copyright (c) Microsoft Corporation. All rights reserved.
+   Licensed under the MIT License. */
+
+// This sample C application for Azure Sphere demonstrates General-Purpose Input/Output (GPIO)
+// peripherals using a blinking LED and a button.
+// The blink rate can be changed through a button press.
+//
+// It uses the API for the following Azure Sphere application libraries:
+// - gpio (digital input for button, digital output for LED)
+// - log (displays messages in the Device Output window during debugging)
+// - eventloop (system invokes handlers for IO events)
+
+#include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -8,39 +20,87 @@
 
 // applibs_versions.h defines the API struct versions to use for applibs APIs.
 #include "applibs_versions.h"
-#include "epoll_timerfd_utilities.h"
-
 #include <applibs/gpio.h>
 #include <applibs/log.h>
+#include <applibs/eventloop.h>
 
-#include "mt3620_rdb.h"
-
-// This sample C application for the MT3620 Reference Development Board (Azure Sphere)
-// blinks an LED.
-// The blink rate can be changed through a button press.
+// The following #include imports a "sample appliance" definition. This app comes with multiple
+// implementations of the sample appliance, each in a separate directory, which allow the code to
+// run on different hardware.
 //
-// It uses the API for the following Azure Sphere application libraries:
-// - gpio (digital input for button)
-// - log (messages shown in Visual Studio's Device Output window during debugging)
+// By default, this app targets hardware that follows the MT3620 Reference Development Board (RDB)
+// specification, such as the MT3620 Dev Kit from Seeed Studio.
+//
+// To target different hardware, you'll need to update CMakeLists.txt. For example, to target the
+// Avnet MT3620 Starter Kit, change the TARGET_HARDWARE variable to
+// "avnet_mt3620_sk".
+//
+// See https://aka.ms/AzureSphereHardwareDefinitions for more details.
+
+// This sample uses a single-thread event loop pattern.
+#include "eventloop_timer_utilities.h"
+
+// Include the starter kit hardware definitions/mappings
+#include "../hw/avnet_mt3620_sk.h"
+
+/// <summary>
+/// Termination codes for this application. These are used for the
+/// application exit code. They must all be between zero and 255,
+/// where zero is reserved for successful termination.
+/// </summary>
+typedef enum {
+    ExitCode_Success = 0,
+
+    ExitCode_TermHandler_SigTerm = 1,
+
+    ExitCode_LedTimer_Consume = 2,
+    ExitCode_LedTimer_SetLedState = 3,
+
+    ExitCode_ButtonTimer_Consume = 4,
+    ExitCode_ButtonTimer_GetButtonState = 5,
+    ExitCode_ButtonTimer_SetBlinkPeriod = 6,
+
+    ExitCode_Init_EventLoop = 7,
+    ExitCode_Init_Button = 8,
+    ExitCode_Init_ButtonPollTimer = 9,
+    ExitCode_Init_Led = 10,
+    ExitCode_Init_LedBlinkTimer = 11,
+    ExitCode_Main_EventLoopFail = 12
+} ExitCode;
 
 // File descriptors - initialized to invalid value
+static EventLoop *eventLoop = NULL;
 static int ledBlinkRateButtonGpioFd = -1;
-static int buttonPollTimerFd = -1;
+static EventLoopTimer *buttonPollTimer = NULL;
 static int blinkingLedGpioFd = -1;
-static int blinkingLedTimerFd = -1;
-static int epollFd = -1;
+static EventLoopTimer *blinkTimer = NULL;
+
+// Define what color LED to blink, valid choices are . . .
+// AVNET_MT3620_SK_USER_LED_RED
+// AVNET_MT3620_SK_USER_LED_GREEN
+// AVNET_MT3620_SK_USER_LED_BLUE
+GPIO_Id ledGPIO = AVNET_MT3620_SK_USER_LED_GREEN;
 
 // Button state variables
 static GPIO_Value_Type buttonState = GPIO_Value_High;
 static GPIO_Value_Type ledState = GPIO_Value_High;
 
 // Blink interval variables
-static const int numBlinkIntervals = 0;
-static const struct timespec blinkIntervals[] = {{0, 125000000}, {0, 250000000}, {0, 500000000}};
+static const int numBlinkIntervals = 3;
+static const struct timespec blinkIntervals[] = {{.tv_sec = 0, .tv_nsec = 125 * 1000 * 1000},
+                                                 {.tv_sec = 0, .tv_nsec = 250 * 1000 * 1000},
+                                                 {.tv_sec = 0, .tv_nsec = 500 * 1000 * 1000}};
 static int blinkIntervalIndex = 0;
 
 // Termination state
-static volatile sig_atomic_t terminationRequired = false;
+static volatile sig_atomic_t exitCode = ExitCode_Success;
+
+static void TerminationHandler(int signalNumber);
+static void BlinkingLedTimerEventHandler(EventLoopTimer *timer);
+static void ButtonTimerEventHandler(EventLoopTimer *timer);
+static ExitCode InitPeripheralsAndHandlers(void);
+static void CloseFdAndPrintError(int fd, const char *fdName);
+static void ClosePeripheralsAndHandlers(void);
 
 /// <summary>
 ///     Signal handler for termination requests. This handler must be async-signal-safe.
@@ -48,16 +108,16 @@ static volatile sig_atomic_t terminationRequired = false;
 static void TerminationHandler(int signalNumber)
 {
     // Don't use Log_Debug here, as it is not guaranteed to be async-signal-safe.
-    terminationRequired = true;
+    exitCode = ExitCode_TermHandler_SigTerm;
 }
 
 /// <summary>
 ///     Handle LED timer event: blink LED.
 /// </summary>
-static void BlinkingLedTimerEventHandler(EventData *eventData)
+static void BlinkingLedTimerEventHandler(EventLoopTimer *timer)
 {
-    if (ConsumeTimerFdEvent(blinkingLedTimerFd) != 0) {
-        terminationRequired = true;
+    if (ConsumeEventLoopTimerEvent(timer) != 0) {
+        exitCode = ExitCode_LedTimer_Consume;
         return;
     }
 
@@ -67,17 +127,18 @@ static void BlinkingLedTimerEventHandler(EventData *eventData)
     int result = GPIO_SetValue(blinkingLedGpioFd, ledState);
     if (result != 0) {
         Log_Debug("ERROR: Could not set LED output value: %s (%d).\n", strerror(errno), errno);
-        terminationRequired = true;
+        exitCode = ExitCode_LedTimer_SetLedState;
+        return;
     }
 }
 
 /// <summary>
 ///     Handle button timer event: if the button is pressed, change the LED blink rate.
 /// </summary>
-static void ButtonTimerEventHandler(EventData *eventData)
+static void ButtonTimerEventHandler(EventLoopTimer *timer)
 {
-    if (ConsumeTimerFdEvent(buttonPollTimerFd) != 0) {
-        terminationRequired = true;
+    if (ConsumeEventLoopTimerEvent(timer) != 0) {
+        exitCode = ExitCode_ButtonTimer_Consume;
         return;
     }
 
@@ -86,7 +147,7 @@ static void ButtonTimerEventHandler(EventData *eventData)
     int result = GPIO_GetValue(ledBlinkRateButtonGpioFd, &newButtonState);
     if (result != 0) {
         Log_Debug("ERROR: Could not read button GPIO: %s (%d).\n", strerror(errno), errno);
-        terminationRequired = true;
+        exitCode = ExitCode_ButtonTimer_GetButtonState;
         return;
     }
 
@@ -95,63 +156,78 @@ static void ButtonTimerEventHandler(EventData *eventData)
     if (newButtonState != buttonState) {
         if (newButtonState == GPIO_Value_Low) {
             blinkIntervalIndex = (blinkIntervalIndex + 1) % numBlinkIntervals;
-            if (SetTimerFdToPeriod(blinkingLedTimerFd, &blinkIntervals[blinkIntervalIndex]) != 0) {
-                terminationRequired = true;
+            if (SetEventLoopTimerPeriod(blinkTimer, &blinkIntervals[blinkIntervalIndex]) != 0) {
+                exitCode = ExitCode_ButtonTimer_SetBlinkPeriod;
             }
         }
         buttonState = newButtonState;
     }
 }
 
-// event handler data structures. Only the event handler field needs to be populated.
-static EventData buttonEventData = {.eventHandler = &ButtonTimerEventHandler};
-static EventData blinkingLedTimerEventData = {.eventHandler = &BlinkingLedTimerEventHandler};
-
 /// <summary>
 ///     Set up SIGTERM termination handler, initialize peripherals, and set up event handlers.
 /// </summary>
-/// <returns>0 on success, or -1 on failure</returns>
-static int InitPeripheralsAndHandlers(void)
+/// <returns>
+///     ExitCode_Success if all resources were allocated successfully; otherwise another
+///     ExitCode value which indicates the specific failure.
+/// </returns>
+static ExitCode InitPeripheralsAndHandlers(void)
 {
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
     action.sa_handler = TerminationHandler;
     sigaction(SIGTERM, &action, NULL);
 
-    epollFd = CreateEpollFd();
-    if (epollFd < 0) {
-        return -1;
+    eventLoop = EventLoop_Create();
+    if (eventLoop == NULL) {
+        Log_Debug("Could not create event loop.\n");
+        return ExitCode_Init_EventLoop;
     }
 
-    // Open button GPIO as input, and set up a timer to poll it
-    Log_Debug("Opening MT3620_RDB_BUTTON_A as input.\n");
-    ledBlinkRateButtonGpioFd = GPIO_OpenAsInput(MT3620_RDB_BUTTON_A);
-    if (ledBlinkRateButtonGpioFd < 0) {
-        Log_Debug("ERROR: Could not open button GPIO: %s (%d).\n", strerror(errno), errno);
-        return -1;
+    // Open SAMPLE_BUTTON_1 GPIO as input, and set up a timer to poll it
+    Log_Debug("Opening Starter Kit button A as input.\n");
+    ledBlinkRateButtonGpioFd = GPIO_OpenAsInput(AVNET_MT3620_SK_USER_BUTTON_A);
+    if (ledBlinkRateButtonGpioFd == -1) {
+        Log_Debug("ERROR: Could not open AVNET_MT3620_SK_USER_BUTTON_A: %s (%d).\n", strerror(errno), errno);
+        return ExitCode_Init_Button;
     }
-    struct timespec buttonPressCheckPeriod = {0, 1000000};
-    buttonPollTimerFd =
-        CreateTimerFdAndAddToEpoll(epollFd, &buttonPressCheckPeriod, &buttonEventData, EPOLLIN);
-    if (buttonPollTimerFd < 0) {
-        return -1;
-    }
-
-    // Open LED GPIO, set as output with value GPIO_Value_High (off), and set up a timer to poll it
-    Log_Debug("Opening MT3620_RDB_LED1_RED.\n");
-    blinkingLedGpioFd =
-        GPIO_OpenAsOutput(MT3620_RDB_LED1_RED, GPIO_OutputMode_PushPull, GPIO_Value_High);
-    if (blinkingLedGpioFd < 0) {
-        Log_Debug("ERROR: Could not open LED GPIO: %s (%d).\n", strerror(errno), errno);
-        return -1;
-    }
-    blinkingLedTimerFd = CreateTimerFdAndAddToEpoll(epollFd, &blinkIntervals[blinkIntervalIndex],
-                                                    &blinkingLedTimerEventData, EPOLLIN);
-    if (blinkingLedTimerFd < 0) {
-        return -1;
+    struct timespec buttonPressCheckPeriod = {.tv_sec = 0, .tv_nsec = 1000000};
+    buttonPollTimer =
+        CreateEventLoopPeriodicTimer(eventLoop, &ButtonTimerEventHandler, &buttonPressCheckPeriod);
+    if (buttonPollTimer == NULL) {
+        return ExitCode_Init_ButtonPollTimer;
     }
 
-    return 0;
+    // Open SAMPLE_LED GPIO, set as output with value GPIO_Value_High (off), and set up a timer to
+    // blink it
+    Log_Debug("Opening SAMPLE_LED as output.\n");
+    blinkingLedGpioFd = GPIO_OpenAsOutput(ledGPIO, GPIO_OutputMode_PushPull, GPIO_Value_High);
+    if (blinkingLedGpioFd == -1) {
+        Log_Debug("ERROR: Could not open SAMPLE_LED GPIO: %s (%d).\n", strerror(errno), errno);
+        return ExitCode_Init_Led;
+    }
+    blinkTimer = CreateEventLoopPeriodicTimer(eventLoop, &BlinkingLedTimerEventHandler,
+                                              &blinkIntervals[blinkIntervalIndex]);
+    if (blinkTimer == NULL) {
+        return ExitCode_Init_LedBlinkTimer;
+    }
+
+    return ExitCode_Success;
+}
+
+/// <summary>
+///     Closes a file descriptor and prints an error on failure.
+/// </summary>
+/// <param name="fd">File descriptor to close</param>
+/// <param name="fdName">File descriptor name to use in error message</param>
+static void CloseFdAndPrintError(int fd, const char *fdName)
+{
+    if (fd >= 0) {
+        int result = close(fd);
+        if (result != 0) {
+            Log_Debug("ERROR: Could not close fd %s: %s (%d).\n", fdName, strerror(errno), errno);
+        }
+    }
 }
 
 /// <summary>
@@ -164,12 +240,13 @@ static void ClosePeripheralsAndHandlers(void)
         GPIO_SetValue(blinkingLedGpioFd, GPIO_Value_High);
     }
 
+    DisposeEventLoopTimer(buttonPollTimer);
+    DisposeEventLoopTimer(blinkTimer);
+    EventLoop_Close(eventLoop);
+
     Log_Debug("Closing file descriptors.\n");
-    CloseFdAndPrintError(blinkingLedTimerFd, "BlinkingLedTimer");
     CloseFdAndPrintError(blinkingLedGpioFd, "BlinkingLedGpio");
-    CloseFdAndPrintError(buttonPollTimerFd, "ButtonPollTimer");
     CloseFdAndPrintError(ledBlinkRateButtonGpioFd, "LedBlinkRateButtonGpio");
-    CloseFdAndPrintError(epollFd, "Epoll");
 }
 
 /// <summary>
@@ -177,19 +254,19 @@ static void ClosePeripheralsAndHandlers(void)
 /// </summary>
 int main(int argc, char *argv[])
 {
-    Log_Debug("Blink application starting.\n");
-    if (InitPeripheralsAndHandlers() != 0) {
-        terminationRequired = true;
-    }
+    Log_Debug("GPIO application starting.\n");
+    exitCode = InitPeripheralsAndHandlers();
 
-    // Use epoll to wait for events and trigger handlers, until an error or SIGTERM happens
-    while (!terminationRequired) {
-        if (WaitForEventAndCallHandler(epollFd) != 0) {
-            terminationRequired = true;
+    // Use event loop to wait for events and trigger handlers, until an error or SIGTERM happens
+    while (exitCode == ExitCode_Success) {
+        EventLoop_Run_Result result = EventLoop_Run(eventLoop, -1, true);
+        // Continue if interrupted by signal, e.g. due to breakpoint being set.
+        if (result == EventLoop_Run_Failed && errno != EINTR) {
+            exitCode = ExitCode_Main_EventLoopFail;
         }
     }
 
     ClosePeripheralsAndHandlers();
     Log_Debug("Application exiting.\n");
-    return 0;
+    return exitCode;
 }

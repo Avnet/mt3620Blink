@@ -1,24 +1,14 @@
 {
   "SchemaVersion": 1,
-  "Name" : "Mt3620Blink1",
-  "ComponentId" : "44580bbf-355f-449d-8189-f9952f3ce769",
+  "Name": "OTA_EXAMPLE_RED-V0",
+  "ComponentId": "dc7f135c-6074-4d49-aa3a-160e4eed884f",
   "EntryPoint": "/bin/app",
   "CmdArgs": [],
   "Capabilities": {
-    "AllowedConnections": [],
-    "AllowedTcpServerPorts": [],
-    "AllowedUdpServerPorts": [],
-    "Gpio": [
-      "$AVNET_MT3620_SK_USER_LED_RED",
-      "$AVNET_MT3620_SK_USER_LED_GREEN",
-      "$AVNET_MT3620_SK_USER_LED_BLUE",
-      "$AVNET_MT3620_SK_USER_BUTTON_A"
-    ],
-    "Uart": [],
-    "I2cMaster": [],
-    "SpiMaster": [],
-    "WifiConfig": false,
-    "NetworkConfig": false,
-    "SystemTime": false
-  }
+    "Gpio": [ "$AVNET_MT3620_SK_USER_BUTTON_A", 
+              "$AVNET_MT3620_SK_USER_LED_RED",
+              "$AVNET_MT3620_SK_USER_LED_GREEN",
+              "$AVNET_MT3620_SK_USER_LED_BLUE"]
+  }, 
+  "ApplicationType": "Default"
 }

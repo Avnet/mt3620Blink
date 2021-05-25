@@ -3,14 +3,25 @@
 
 cmake_minimum_required(VERSION 3.10)
 
-project(HelloWorld_HighLevelApp C)
+project(OTA_Example_App C)
 
-azsphere_configure_tools(TOOLS_REVISION "20.04")
-azsphere_configure_api(TARGET_API_SET "8")
+azsphere_configure_tools(TOOLS_REVISION "21.01")
+azsphere_configure_api(TARGET_API_SET "9")
 
-add_executable(${PROJECT_NAME} main.c epoll_timerfd_utilities.c)
-target_link_libraries(${PROJECT_NAME} pthread gcc_s c applibs pthread gcc_s c)
+add_executable(${PROJECT_NAME} main.c eventloop_timer_utilities.c)
+target_link_libraries(${PROJECT_NAME} applibs gcc_s c)
 
-azsphere_target_hardware_definition(${PROJECT_NAME} TARGET_DIRECTORY "Hardware/avnet_mt3620_sk" TARGET_DEFINITION "avnet_mt3620_sk.json")
+# Target hardware for the sample.
+set(TARGET_HARDWARE "avnet_mt3620_sk")
+set(TARGET_DEFINITION "avnet_mt3620_sk.json")
+
+# The path to the target hardware for the sample.
+find_path(
+    TARGET_DIRECTORY
+    NAMES ${TARGET_DEFINITION}
+    PATHS "HardwareDefinitions/${TARGET_HARDWARE}" "Hardware/${TARGET_HARDWARE}"
+    NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+
+azsphere_target_hardware_definition(${PROJECT_NAME} TARGET_DIRECTORY "${TARGET_DIRECTORY}" TARGET_DEFINITION "${TARGET_DEFINITION}")
 
 azsphere_target_add_image_package(${PROJECT_NAME})
