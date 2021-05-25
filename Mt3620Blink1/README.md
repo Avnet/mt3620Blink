@@ -47,9 +47,7 @@ The sample uses the following Azure Sphere libraries.
 
 The sample requires the following hardware:
 
-* [Seeed MT3620 Development Kit](https://aka.ms/azurespheredevkits) or other hardware that implements the [MT3620 Reference Development Board (RDB)](https://docs.microsoft.com/azure-sphere/hardware/mt3620-reference-board-design) design.
-
-**Note:** By default, this sample targets [MT3620 reference development board (RDB)](https://docs.microsoft.com/azure-sphere/hardware/mt3620-reference-board-design) hardware, such as the MT3620 development kit from Seeed Studio. To build the sample for different Azure Sphere hardware, change the Target Hardware Definition Directory in the CMakeLists.txt file. For detailed instructions, see the [README file in the HardwareDefinitions folder](../../../HardwareDefinitions/README.md).
+Avnet Azure Sphere Starter Kit (Rev1 or Rev2)
 
 ## Prepare the sample
 
@@ -63,11 +61,20 @@ The sample requires the following hardware:
 
 ## Build and run the sample
 
+The application can be modified to blink either the red, green, or blue RGB LED element.  Mofify line #82 in main.c to select which LED to blink.
+
+
+    // Define what color LED to blink, valid choices are . . .
+    // AVNET_MT3620_SK_USER_LED_RED
+    // AVNET_MT3620_SK_USER_LED_GREEN
+    // AVNET_MT3620_SK_USER_LED_BLUE
+    GPIO_Id ledGPIO = AVNET_MT3620_SK_USER_LED_GREEN;
+
 To build and run this sample, follow the instructions in [Build a sample application](../../../BUILD_INSTRUCTIONS.md).
 
 ## Observe the output
 
- LED1 on the MT3620 begins blinking red.
+ LED1 on the MT3620 begins blinking green.
 
  Press button A repeatedly to cycle through the 3 possible blink rates.
 
